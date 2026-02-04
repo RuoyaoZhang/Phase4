@@ -59,7 +59,7 @@ void setup() {
   Serial.print("audioDataLen = ");
   Serial.println(audioDataLen);
 
-  // 提高 MTU（central 不同意也没关系，会回落）
+  // raise MTU
   BLEDevice::setMTU(185);
   BLEDevice::init(DEVICE_NAME);
 
@@ -68,14 +68,14 @@ void setup() {
 
   BLEService* service = server->createService(SERVICE_UUID);
 
-  // RX: PC 写入触发 START
+  // RX: PC START
   rxChar = service->createCharacteristic(
     CHAR_RX_UUID,
     BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_NR
   );
   rxChar->setCallbacks(new RxCallbacks());
 
-  // TX: ESP32 notify 发数据
+  // TX: ESP32 notify
   txChar = service->createCharacteristic(
     CHAR_TX_UUID,
     BLECharacteristic::PROPERTY_NOTIFY
@@ -84,7 +84,7 @@ void setup() {
 
   service->start();
 
-  // 广播带 service UUID（Windows 扫描更稳定）
+  // broadcast service UUID（for Windows scanning）
   BLEAdvertising* adv = BLEDevice::getAdvertising();
   adv->addServiceUUID(SERVICE_UUID);
   adv->setScanResponse(true);
@@ -99,7 +99,7 @@ void loop() {
     return;
   }
 
-  // 等 PC 端订阅 + 写 START
+  // wait for subscription START
   if (!startRequested) {
     static uint32_t lastMsg = 0;
     if (millis() - lastMsg > 1000) {
@@ -110,14 +110,13 @@ void loop() {
     return;
   }
 
-  // 消费这次 START（避免重复发送）
   startRequested = false;
 
-  // 再给 Windows 一点缓冲时间（可选，但很稳）
+  // possible needed delay
   delay(200);
 
-  // 每包：4-byte seq + payload
-  const size_t PAYLOAD = 120;   // 稳定优先；想更快可改 180
+  // each chunk：4-byte seq + payload
+  const size_t PAYLOAD = 120;  // higher --> faster
   const size_t HEADER  = 4;
   uint8_t buf[HEADER + PAYLOAD];
 
@@ -137,7 +136,7 @@ void loop() {
     buf[2] = (seq >>  8) & 0xFF;
     buf[3] = (seq >>  0) & 0xFF;
 
-    // payload 从 PROGMEM 拷贝到 buf[4..]
+    // copy payload
     memcpy_P(buf + HEADER, audioData + sent, n);
 
     notifyChunk(buf, HEADER + n);
@@ -146,7 +145,6 @@ void loop() {
     seq++;
     chunks++;
 
-    // 温和让出，避免把 central/协议栈打爆
     if (chunks % 50 == 0) delay(0);
 
     if (chunks % 200 == 0) {
@@ -157,7 +155,7 @@ void loop() {
     }
   }
 
-  // END 包：seq = 0xFFFFFFFF，长度只有 4 bytes
+  // END chunk
   uint8_t endBuf[4] = {0xFF, 0xFF, 0xFF, 0xFF};
   if (connected) notifyChunk(endBuf, 4);
 
@@ -165,6 +163,5 @@ void loop() {
   Serial.println(millis() - t0);
   Serial.println("[LOSS] Done. Waiting for next START (no need to reconnect).");
 
-  // 连接不断开也没关系：回到 loop 顶部继续等下一次 START
   delay(200);
 }
